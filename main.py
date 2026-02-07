@@ -17,22 +17,29 @@ def enviar_telegram(mensagem):
 
 def perguntar_ia(ticker, variacao, preco):
     try:
-        # Tenta reconfigurar a cada chamada para garantir conexão
+        # Configuração simplificada e direta
         genai.configure(api_key=GEMINI_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
         
-        time.sleep(4) # Espera generosa para a conta gratuita
+        # Tentamos o modelo 1.5-flash com o nome completo
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
         
-        prompt = f"Analise a ação {ticker} que variou {variacao}% custando ${preco}. O que explica isso em 10 palavras?"
-        res = model.generate_content(prompt)
-        return res.text.strip()
+        time.sleep(5) # Pausa maior para evitar o erro de quota
+        
+        prompt = f"Ação {ticker} variou {variacao}% e custa ${preco}. Resuma o motivo e tendência em 15 palavras em Português."
+        
+        response = model.generate_content(prompt)
+        return response.text.strip()
     except Exception as e:
-        # Se falhar, ele agora vai dizer o erro real na mensagem do Telegram!
-        erro_msg = str(e)[:50]
-        return f"Erro na IA ({erro_msg})"
+        # Se o 1.5-flash falhar, tentamos o 1.0-pro como backup automático
+        try:
+            model_backup = genai.GenerativeModel('models/gemini-1.0-pro')
+            response = model_backup.generate_content(prompt)
+            return response.text.strip()
+        except:
+            return f"Erro persistente: {str(e)[:30]}"
 
 def executar_itisinvest():
-    print("📡 Diagnóstico de IA em curso...")
+    print("📡 ITISI Invest: Corrigindo rota da API...")
     
     info_carteira = ""
     if os.path.exists('carteira.csv'):
@@ -43,23 +50,28 @@ def executar_itisinvest():
                 p_compra = float(row['preco_compra'])
                 
                 acao = yf.Ticker(t)
-                p_atual = acao.history(period="1d")['Close'].iloc[-1]
+                hist = acao.history(period="1d")
+                p_atual = hist['Close'].iloc[-1]
                 perf = ((p_atual - p_compra) / p_compra) * 100
                 
                 analise = perguntar_ia(t, round(perf, 2), round(p_atual, 2))
-                info_carteira += f"🔴 *{t}* | {perf:.2f}%\n   👉 {analise}\n\n"
+                
+                emoji = "🟢" if perf >= 0 else "🔴"
+                info_carteira += f"{emoji} *{t}* | {perf:.2f}%\n   👉 {analise}\n\n"
             except: continue
 
     radar_investimentos = ""
-    for t in ["NVDA", "TSLA"]:
+    for t in ["NVDA", "TSLA", "MSTR"]:
         try:
             acao = yf.Ticker(t)
-            v = ((acao.history(period="2d")['Close'].iloc[-1] / acao.history(period="2d")['Close'].iloc[-2]) - 1) * 100
-            analise_r = perguntar_ia(t, round(v, 2), "MERCADO")
+            h = acao.history(period="2d")
+            v = ((h['Close'].iloc[-1] / h['Close'].iloc[-2]) - 1) * 100
+            analise_r = perguntar_ia(t, round(v, 2), round(h['Close'].iloc[-1], 2))
             radar_investimentos += f"🚀 *{t}* (+{v:.2f}%)\n   👉 {analise_r}\n\n"
         except: continue
 
-    msg = f"🧪 *TESTE DE DIAGNÓSTICO IA*\n\n{info_carteira}{radar_investimentos}"
+    msg = f"📦 *ITISI Invest - RELATÓRIO CORRIGIDO*\n───────────────────\n{info_carteira}"
+    msg += f"🔍 *POTENCIAIS INVESTIMENTOS*\n───────────────────\n{radar_investimentos}"
     enviar_telegram(msg)
 
 if __name__ == "__main__":
