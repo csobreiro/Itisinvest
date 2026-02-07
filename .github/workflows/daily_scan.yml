@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Permite ao bot escrever o ficheiro historico.csv
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
@@ -19,7 +21,7 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          pip install yfinance pandas google-generativeai requests
+          pip install yfinance pandas google-generativeai requests lxml
 
       - name: Executar itisinvest
         env:
@@ -27,3 +29,11 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
+
+      - name: Guardar Histórico no GitHub
+        run: |
+          git config --global user.name "itisinvest-bot"
+          git config --global user.email "bot@itisinvest.com"
+          git add historico.csv
+          git commit -m "Atualização automática do histórico [skip ci]" || echo "Sem alterações para guardar"
+          git push
