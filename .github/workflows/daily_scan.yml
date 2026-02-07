@@ -2,8 +2,8 @@ name: ITISI Invest Scan
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5' # Corre automaticamente nos dias úteis
-  workflow_dispatch:      # Permite-te correr manualmente sempre que quiseres
+    - cron: '0 13 * * 1-5' # Corre às 13h nos dias úteis
+  workflow_dispatch:      # Permite correr manualmente quando quiseres
 
 jobs:
   build:
@@ -17,16 +17,14 @@ jobs:
         with:
           python-version: '3.9'
 
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance pandas requests groq
+
       - name: Executar Script
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
-
-      - name: Executar ITISI Invest
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
