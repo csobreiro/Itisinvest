@@ -21,7 +21,7 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          pip install yfinance pandas google-generativeai requests lxml
+          pip install --upgrade google-generativeai yfinance pandas requests lxml
 
       - name: Executar itisinvest
         env:
