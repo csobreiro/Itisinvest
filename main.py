@@ -12,54 +12,41 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"})
+    payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
+    requests.post(url, data=payload)
 
 def perguntar_ia(ticker, preco):
     try:
-        # Debug para o log do GitHub (não vai para o Telegram)
-        if not GEMINI_KEY:
-            return "Erro: Chave API não encontrada nos Secrets."
-        
         genai.configure(api_key=GEMINI_KEY)
-        
-        # Tentamos o modelo 1.0 Pro primeiro - é o mais compatível de todos
-        model = genai.GenerativeModel('gemini-1.0-pro')
-        
-        time.sleep(2) # Pausa curta
-        
-        prompt = f"A ação {ticker} custa ${preco}. Escreva uma frase curta sobre o setor desta empresa em Português."
-        
-        # Chamada ultra simples
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        time.sleep(4) 
+        prompt = f"Ação {ticker} custa ${preco}. Resuma a situação atual em 1 frase curta em Português."
         response = model.generate_content(prompt)
-        
-        if response and response.text:
-            return response.text.strip()
-        return "IA respondeu mas o texto está vazio."
-        
+        return response.text.strip()
     except Exception as e:
-        # Se falhar o Pro, tentamos o Flash como última esperança
-        try:
-            model_f = genai.GenerativeModel('gemini-1.5-flash')
-            return model_f.generate_content(prompt).text.strip()
-        except:
-            return f"Erro final: {str(e)[:40]}"
+        return f"Erro na IA: {str(e)[:20]}"
 
 def executar_itisinvest():
-    print(f"📡 Debug: Chave começa com {GEMINI_KEY[:4]}... (Verifique se coincide)")
+    print("📡 ITISI Invest: Ativando com nova chave...")
     
-    info = ""
-    # Teste apenas com NVDA para isolar o problema
-    try:
-        t = "NVDA"
-        acao = yf.Ticker(t)
-        p = acao.history(period="1d")['Close'].iloc[-1]
-        
-        analise = perguntar_ia(t, round(p, 2))
-        info = f"📈 *{t}*\n👉 {analise}"
-    except Exception as e:
-        info = f"Erro no Yahoo Finance: {e}"
+    info_carteira = ""
+    if os.path.exists('carteira.csv'):
+        df = pd.read_csv('carteira.csv')
+        df.columns = df.columns.str.strip().str.lower()
+        for _, row in df.iterrows():
+            try:
+                t = str(row['ticker']).strip().upper()
+                p_compra = float(row['preco_compra'])
+                acao = yf.Ticker(t)
+                p_atual = acao.history(period="1d")['Close'].iloc[-1]
+                perf = ((p_atual - p_compra) / p_compra) * 100
+                analise = perguntar_ia(t, round(p_atual, 2))
+                emoji = "🟢" if perf >= 0 else "🔴"
+                info_carteira += f"{emoji} *{t}* | {perf:.2f}%\n   👉 {analise}\n\n"
+            except: continue
 
-    enviar_telegram(f"🧪 *TESTE DEFINITIVO*\n\n{info}")
+    msg = f"📦 *ITISI Invest - RELATÓRIO ATUALIZADO*\n───────────────────\n{info_carteira}"
+    enviar_telegram(msg)
 
 if __name__ == "__main__":
     executar_itisinvest()
