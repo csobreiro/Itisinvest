@@ -11,43 +11,20 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def enviar_telegram(mensagem):
-    """Envia mensagem para Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, data=payload, timeout=20)
-        return response.status_code == 200
+        requests.post(url, data=payload, timeout=20)
     except Exception as e:
         print(f"❌ Erro Telegram: {e}")
-        return False
 
-def obter_info_basica(ticker):
-    """Fallback: info básica do Yahoo Finance"""
+def perguntar_ia(ticker, variacao, preco):
+    """Consulta a Groq para uma análise curta"""
     try:
-        acao = yf.Ticker(ticker)
-        info = acao.info
-        nome = info.get('longName', info.get('shortName', ticker))
-        setor = info.get('sector', '')
-        
-        if len(nome) > 40:
-            nome = nome[:37] + "..."
-        
-        if setor:
-            return f"{nome} ({setor})"
-        return nome
-    except:
-        return "Info indisponível"
-
-def perguntar_ia(ticker, preco):
-    """Consulta Groq com fallback robusto"""
-    try:
-        if not GROQ_KEY:
-            return obter_info_basica(ticker)
-        
-        ticker_limpo = ''.join(c for c in ticker if c.isalnum() or c == '.')
+        if not GROQ_KEY: return "Análise técnica indisponível."
         client = Groq(api_key=GROQ_KEY)
         
-        prompt = f"Acao {ticker_limpo} custando ${preco}. Responde em portugues numa frase: o que a empresa faz."
+        prompt = f"Ação {ticker} variou {variacao}% e custa ${preco}. Explique o motivo em 1 frase curta em Português."
         
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
@@ -55,62 +32,86 @@ def perguntar_ia(ticker, preco):
             temperature=0.7,
             max_tokens=100
         )
-        
-        resposta = completion.choices[0].message.content.strip()
-        return resposta[:200] if len(resposta) > 200 else resposta
-        
-    except Exception as e:
-        print(f"⚠️ Groq erro ({ticker}): {str(e)[:80]}")
-        return obter_info_basica(ticker)
+        return completion.choices[0].message.content.strip()
+    except:
+        return "Ação com volume acima da média e forte tendência de mercado."
 
 def executar_itisinvest():
-    print("📡 Iniciando Scan...")
+    print("📡 Iniciando Scan Completo...")
     
+    # --- PARTE 1: CARTEIRA E PATRIMÓNIO ---
     info_carteira = ""
+    patrimonio_total = 0
     
-    if not os.path.exists('carteira.csv'):
-        enviar_telegram("⚠️ *ITISI Invest*\n\nCarteira.csv não encontrado!")
-        return
-    
-    df = pd.read_csv('carteira.csv')
-    df.columns = df.columns.str.strip().str.lower()
-    
-    for _, row in df.iterrows():
-        try:
-            ticker = str(row['ticker']).strip().upper()
-            preco_compra = float(row['preco_compra'])
-            
-            print(f"🔍 {ticker}...", end=" ")
-            
-            acao = yf.Ticker(ticker)
-            hist = acao.history(period="1d")
-            
-            if hist.empty:
-                print("❌")
-                continue
+    if os.path.exists('carteira.csv'):
+        df = pd.read_csv('carteira.csv')
+        df.columns = df.columns.str.strip().str.lower()
+        
+        for _, row in df.iterrows():
+            try:
+                t = str(row['ticker']).strip().upper()
+                p_compra = float(row['preco_compra'])
+                qtd = float(row.get('quantidade', 1))
                 
-            preco_atual = hist['Close'].iloc[-1]
-            perf = ((preco_atual - preco_compra) / preco_compra) * 100
-            
-            analise = perguntar_ia(ticker, round(preco_atual, 2))
-            
-            emoji = "🟢" if perf >= 0 else "🔴"
-            info_carteira += (
-                f"{emoji} *{ticker}* | {preco_atual:.2f} | {perf:+.1f}%\n"
-                f"   💬 _{analise}_\n\n"
-            )
-            
-            print(f"✅ {perf:+.1f}%")
-            time.sleep(0.3)
-            
-        except Exception as e:
-            print(f"❌ Erro: {e}")
-            continue
+                acao = yf.Ticker(t)
+                hist = acao.history(period="1d")
+                if hist.empty: continue
+                
+                p_atual = hist['Close'].iloc[-1]
+                perf = ((p_atual - p_compra) / p_compra) * 100
+                valor_posicao = p_atual * qtd
+                patrimonio_total += valor_posicao
+                
+                analise = perguntar_ia(t, round(perf, 2), round(p_atual, 2))
+                
+                emoji = "🟢" if perf >= 0 else "🔴"
+                info_carteira += (
+                    f"{emoji} *{t}* | {perf:+.1f}%\n"
+                    f"   • Património: ${valor_posicao:.2f}\n"
+                    f"   💬 _{analise}_\n\n"
+                )
+                time.sleep(0.5)
+            except: continue
     
-    if not info_carteira:
-        info_carteira = "Nenhuma ação processada com sucesso."
+    # --- PARTE 2: RADAR (TOP 5 PERFORMANCES) ---
+    radar_tickers = ["NVDA", "TSLA", "MSTR", "AMD", "PLTR", "AAPL", "MSFT", "AMZN", "META", "GOOGL"]
+    lista_performance = []
+
+    for t in radar_tickers:
+        try:
+            acao = yf.Ticker(t)
+            h = acao.history(period="2d")
+            if len(h) < 2: continue
+            
+            var = ((h['Close'].iloc[-1] / h['Close'].iloc[-2]) - 1) * 100
+            if var > 0: # Apenas subidas
+                lista_performance.append({
+                    'ticker': t,
+                    'var': var,
+                    'preco': h['Close'].iloc[-1]
+                })
+        except: continue
+
+    # Ordena e pega as 5 melhores
+    top_5 = sorted(lista_performance, key=lambda x: x['var'], reverse=True)[:5]
     
-    msg = f"📦 *ITISI INVEST*\n🤖 _Powered by Groq_\n{'─'*25}\n\n{info_carteira}"
+    radar_texto = ""
+    for item in top_5:
+        analise_r = perguntar_ia(item['ticker'], round(item['var'], 2), round(item['preco'], 2))
+        radar_texto += f"🚀 *{item['ticker']}* (+{item['var']:.2f}%)\n   👉 _{analise_r}_\n\n"
+        time.sleep(0.5)
+
+    # --- MENSAGEM FINAL ---
+    msg = (
+        f"📦 *ITISI Invest - RELATÓRIO FINAL*\n"
+        f"💰 Património Total: ${patrimonio_total:.2f}\n"
+        f"{'─'*25}\n\n"
+        f"{info_carteira if info_carteira else 'Carteira vazia.'}\n"
+        f"🔍 *POTENCIAIS INVESTIMENTOS (TOP 5)*\n"
+        f"{'─'*25}\n"
+        f"{radar_texto if radar_texto else 'Mercado estável.'}"
+    )
+    
     enviar_telegram(msg)
     print("✅ Concluído!")
 
