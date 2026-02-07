@@ -1,12 +1,11 @@
 import yfinance as yf
 import pandas as pd
-import google.generativeai as genai
 import requests
 import os
-import time
+from groq import Groq
 
 # --- CONFIGURAÇÕES ---
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_KEY = os.getenv("GROQ_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -17,28 +16,20 @@ def enviar_telegram(mensagem):
 
 def perguntar_ia(ticker, preco):
     try:
-        genai.configure(api_key=GEMINI_KEY)
-        # Usamos o nome do modelo sem prefixos extras para compatibilidade total na v0.8.3
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        client = Groq(api_key=GROQ_KEY)
         
-        time.sleep(5) # Pausa para quota gratuita
+        prompt = f"Ação {ticker} preço ${preco}. Explique brevemente o que a empresa faz e a tendência atual em 1 frase curta em Português."
         
-        prompt = f"Ação {ticker} preço ${preco}. Resuma o que a empresa faz e a tendência em 1 frase em Português."
-        response = model.generate_content(prompt)
-        
-        if response.text:
-            return response.text.strip()
-        return "Análise técnica indisponível no momento."
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama3-8b-8192", # Modelo super rápido e estável
+        )
+        return chat_completion.choices[0].message.content.strip()
     except Exception as e:
-        # Se o Flash falhar, tentamos o Pro como último recurso
-        try:
-            model_alt = genai.GenerativeModel('gemini-pro')
-            return model_alt.generate_content(prompt).text.strip()
-        except:
-            return f"Erro: {str(e)[:20]}"
+        return "Análise técnica indisponível (Erro na API)."
 
 def executar_itisinvest():
-    print("📡 ITISI Invest: A gerar relatório final...")
+    print("📡 ITISI Invest: A gerar relatório via Groq Cloud...")
     
     info_carteira = ""
     if os.path.exists('carteira.csv'):
@@ -62,7 +53,7 @@ def executar_itisinvest():
                 info_carteira += f"{emoji} *{t}* | {perf:.2f}%\n   👉 {analise}\n\n"
             except: continue
 
-    msg = f"📦 *ITISI Invest - RELATÓRIO*\n───────────────────\n{info_carteira}"
+    msg = f"📦 *ITISI Invest - RELATÓRIO (GROQ)*\n───────────────────\n{info_carteira}"
     enviar_telegram(msg)
 
 if __name__ == "__main__":
