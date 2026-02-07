@@ -16,84 +16,90 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=payload, timeout=10)
-    except:
-        print("Erro ao contactar Telegram")
-
-def obter_tickers_sp500():
-    try:
-        tabela = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        return [t.replace('.', '-') for t in tabela[0]['Symbol'].tolist()]
-    except:
-        return ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN"]
+    requests.post(url, data=payload, timeout=20)
 
 def perguntar_ia(nome, ticker, variacao, contexto, tipo_alerta):
     try:
         prompt = (f"Empresa: {nome} ({ticker}). Situação: {tipo_alerta} com {variacao}% de variação. "
-                  f"Notícias: {contexto}. Explica o que fazer (manter/vender/comprar) em 2 frases em Português.")
+                  f"Notícias: {contexto}. Explique o que fazer em 2 frases curtas em Português.")
         res = model.generate_content(prompt)
         return res.text.strip()
     except:
-        return "Análise técnica recomenda cautela. Verifique o volume de fecho."
+        return "Análise técnica sugere acompanhamento do volume de fecho."
 
 def executar_itisinvest():
-    print("📡 ITISI Invest: A processar radar e carteira...")
+    print("📡 ITISI Invest: A processar relatório por secções...")
     
-    # 1. CARREGAR A TUA CARTEIRA
-    alertas_venda = ""
+    # --- SECÇÃO 1: INFORMAÇÃO SOBRE A TUA CARTEIRA ---
+    info_carteira = ""
+    
     if os.path.exists('carteira.csv'):
         try:
             df_cart = pd.read_csv('carteira.csv')
             for _, row in df_cart.iterrows():
-                t = row['ticker']
-                p_compra = float(row['preco_compra'])
-                
-                acao = yf.Ticker(t)
-                preco_atual = acao.history(period="1d")['Close'].iloc[-1]
-                performance = ((preco_atual - p_compra) / p_compra) * 100
-                
-                # REGRAS: Lucro > 10% ou Prejuízo < -5%
-                if performance > 10 or performance < -5:
-                    tipo = "💰 LUCRO ATINGIDO" if performance > 0 else "⚠️ STOP LOSS ATIVADO"
-                    news = acao.news[0].get('title', '') if acao.news else "Sem notícias"
-                    analise = perguntar_ia(t, t, round(performance, 2), news, tipo)
+                try:
+                    t = row['ticker']
+                    p_compra = float(row['preco_compra'])
+                    qtd = float(row.get('quantidade', 0))
                     
-                    alertas_venda += f"*{tipo}*\nAtivo: {t}\nResultado: {performance:.2f}%\nPreço: ${preco_atual:.2f}\n🧐 {analise}\n\n"
-        except Exception as e:
-            print(f"Erro ao ler carteira: {e}")
+                    acao = yf.Ticker(t)
+                    preco_atual = acao.history(period="1d")['Close'].iloc[-1]
+                    
+                    valor_posicao = preco_atual * qtd
+                    lucro_unidade = preco_atual - p_compra
+                    lucro_posicao = lucro_unidade * qtd
+                    perf = (lucro_unidade / p_compra) * 100
+                    
+                    emoji = "🟢" if perf >= 0 else "🔴"
+                    info_carteira += f"{emoji} *{t}*\n"
+                    info_carteira += f"   • Valor em Carteira: ${valor_posicao:.2f}\n"
+                    info_carteira += f"   • Rendimento: {perf:.2f}% (${lucro_posicao:.2f})\n"
+                    
+                    # Alertas específicos (Lucro > 10% ou Perda < -5%)
+                    if perf > 10 or perf < -5:
+                        tipo = "💰 TAKE PROFIT" if perf > 0 else "⚠️ STOP LOSS"
+                        analise = perguntar_ia(t, t, round(perf, 2), "Movimentação na carteira", tipo)
+                        info_carteira += f"   👉 *ALERTA:* {analise}\n"
+                    info_carteira += "\n"
+                except: continue
+        except:
+            info_carteira = "⚠️ Erro ao ler o ficheiro carteira.csv\n\n"
 
-    # 2. RADAR DE COMPRAS (MERCADO)
-    tickers_mercado = obter_tickers_sp500()
-    performance_lista = []
-    for t in tickers_mercado[:80]: # Analisa os 80 maiores
-        try:
-            acao = yf.Ticker(t)
-            hist = acao.history(period="2d")
-            variacao = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
-            
-            if variacao > 3 and acao.info.get('regularMarketVolume', 0) > 1000000:
-                performance_lista.append({
-                    'ticker': t, 'nome': acao.info.get('longName', t),
-                    'variacao': round(variacao, 2), 'preco': round(hist['Close'].iloc[-1], 2),
-                    'setor': acao.info.get('sector', 'N/A')
-                })
-        except: continue
+    # --- SECÇÃO 2: POTENCIAIS INVESTIMENTOS (RADAR) ---
+    radar_investimentos = ""
+    try:
+        tabela = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        tickers_sp500 = [t.replace('.', '-') for t in tabela['Symbol'].tolist()[:80]]
+        performance_lista = []
+        
+        for t in tickers_sp500:
+            try:
+                acao = yf.Ticker(t)
+                hist = acao.history(period="2d")
+                var = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
+                if var > 2.5:
+                    performance_lista.append({'t': t, 'n': acao.info.get('longName', t), 'v': round(var, 2), 'p': round(hist['Close'].iloc[-1], 2)})
+            except: continue
+        
+        top_5 = sorted(performance_lista, key=lambda x: x['v'], reverse=True)[:5]
+        for c in top_5:
+            analise = perguntar_ia(c['n'], c['t'], c['v'], "Radar de mercado", "Potencial Compra")
+            radar_investimentos += f"🚀 *{c['n']}* ({c['t']})\n"
+            radar_investimentos += f"   • Subida: +{c['v']}% | Preço: ${c['p']}\n"
+            radar_investimentos += f"   • IA: {analise}\n\n"
+    except:
+        radar_investimentos = "⚠️ Não foi possível carregar o radar de mercado.\n"
 
-    top_5 = sorted(performance_lista, key=lambda x: x['variacao'], reverse=True)[:5]
-
-    # 3. CONSTRUIR MENSAGEM
-    msg = "🚀 *RELATÓRIO ITISI Invest*\n\n"
+    # --- MONTAGEM DA MENSAGEM FINAL ---
+    msg_final = f"📦 *INFORMAÇÃO SOBRE A SUA CARTEIRA*\n"
+    msg_final += f"───────────────────\n"
+    msg_final += info_carteira if info_carteira else "Nenhum ativo registado na carteira.\n"
     
-    if alertas_venda:
-        msg += "🔔 *ALERTAS DE GESTÃO:*\n" + alertas_venda + "───────────────\n"
-    
-    msg += "📈 *MELHORES DO DIA (RADAR):*\n"
-    for c in top_5:
-        analise = perguntar_ia(c['nome'], c['ticker'], c['variacao'], "Subida forte", "Compra")
-        msg += f"*{c['nome']}*\nVar: +{c['variacao']}% | ${c['preco']}\n🧐 {analise}\n\n"
+    msg_final += f"\n🔍 *POTENCIAIS INVESTIMENTOS*\n"
+    msg_final += f"───────────────────\n"
+    msg_final += radar_investimentos
 
-    enviar_telegram(msg)
+    enviar_telegram(msg_final)
 
 if __name__ == "__main__":
     executar_itisinvest()
