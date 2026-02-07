@@ -4,6 +4,7 @@ import requests
 import os
 from groq import Groq
 import time
+from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 GROQ_KEY = os.getenv("GROQ_API_KEY")
@@ -19,13 +20,10 @@ def enviar_telegram(mensagem):
         print(f"❌ Erro Telegram: {e}")
 
 def perguntar_ia(ticker, variacao, preco):
-    """Consulta a Groq para uma análise curta"""
     try:
         if not GROQ_KEY: return "Análise técnica indisponível."
         client = Groq(api_key=GROQ_KEY)
-        
         prompt = f"Ação {ticker} variou {variacao}% e custa ${preco}. Explique o motivo em 1 frase curta em Português."
-        
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
@@ -34,15 +32,17 @@ def perguntar_ia(ticker, variacao, preco):
         )
         return completion.choices[0].message.content.strip()
     except:
-        return "Ação com volume acima da média e forte tendência de mercado."
+        return "Ação com forte volume e tendência de mercado positiva."
 
 def executar_itisinvest():
-    print("📡 Iniciando Scan Completo...")
+    # Captura a data atual
+    data_atual = datetime.now().strftime("%d/%m/%Y")
+    print(f"📡 Iniciando Scan para o dia {data_atual}...")
     
-    # --- PARTE 1: CARTEIRA E PATRIMÓNIO ---
     info_carteira = ""
     patrimonio_total = 0
     
+    # --- PARTE 1: CARTEIRA ---
     if os.path.exists('carteira.csv'):
         df = pd.read_csv('carteira.csv')
         df.columns = df.columns.str.strip().str.lower()
@@ -70,10 +70,10 @@ def executar_itisinvest():
                     f"   • Património: ${valor_posicao:.2f}\n"
                     f"   💬 _{analise}_\n\n"
                 )
-                time.sleep(0.5)
+                time.sleep(0.4)
             except: continue
     
-    # --- PARTE 2: RADAR (TOP 5 PERFORMANCES) ---
+    # --- PARTE 2: RADAR TOP 5 ---
     radar_tickers = ["NVDA", "TSLA", "MSTR", "AMD", "PLTR", "AAPL", "MSFT", "AMZN", "META", "GOOGL"]
     lista_performance = []
 
@@ -82,28 +82,21 @@ def executar_itisinvest():
             acao = yf.Ticker(t)
             h = acao.history(period="2d")
             if len(h) < 2: continue
-            
             var = ((h['Close'].iloc[-1] / h['Close'].iloc[-2]) - 1) * 100
-            if var > 0: # Apenas subidas
-                lista_performance.append({
-                    'ticker': t,
-                    'var': var,
-                    'preco': h['Close'].iloc[-1]
-                })
+            if var > 0:
+                lista_performance.append({'ticker': t, 'var': var, 'preco': h['Close'].iloc[-1]})
         except: continue
 
-    # Ordena e pega as 5 melhores
     top_5 = sorted(lista_performance, key=lambda x: x['var'], reverse=True)[:5]
-    
     radar_texto = ""
     for item in top_5:
         analise_r = perguntar_ia(item['ticker'], round(item['var'], 2), round(item['preco'], 2))
         radar_texto += f"🚀 *{item['ticker']}* (+{item['var']:.2f}%)\n   👉 _{analise_r}_\n\n"
-        time.sleep(0.5)
+        time.sleep(0.4)
 
     # --- MENSAGEM FINAL ---
     msg = (
-        f"📦 *ITISI Invest - RELATÓRIO FINAL*\n"
+        f"📦 *RELATÓRIO DIÁRIO - {data_atual}*\n"
         f"💰 Património Total: ${patrimonio_total:.2f}\n"
         f"{'─'*25}\n\n"
         f"{info_carteira if info_carteira else 'Carteira vazia.'}\n"
@@ -113,7 +106,7 @@ def executar_itisinvest():
     )
     
     enviar_telegram(msg)
-    print("✅ Concluído!")
+    print(f"✅ Relatório de {data_atual} enviado!")
 
 if __name__ == "__main__":
     executar_itisinvest()
