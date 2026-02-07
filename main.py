@@ -3,6 +3,7 @@ import pandas as pd
 import google.generativeai as genai
 import requests
 import os
+from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -18,79 +19,66 @@ def enviar_telegram(mensagem):
     requests.post(url, data=payload)
 
 def obter_tickers_automaticos():
-    print("🌐 itisinvest: A descarregar lista atualizada do S&P 500...")
     try:
-        # Puxa a lista atualizada das 500 maiores empresas do mundo via Wikipedia
         tabela = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
         df = tabela[0]
-        tickers = df['Symbol'].tolist()
-        # Limpeza para tickers que o Yahoo usa diferente (ex: BRK.B para BRK-B)
-        tickers = [t.replace('.', '-') for t in tickers]
-        return tickers
-    except Exception as e:
-        print(f"Erro ao obter lista: {e}")
-        return ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN"] # Lista de segurança
+        return [t.replace('.', '-') for t in df['Symbol'].tolist()]
+    except:
+        return ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN"]
 
 def executar_itisinvest():
     tickers = obter_tickers_automaticos()
     performance_lista = []
     
-    print(f"📡 A analisar {len(tickers)} ativos. Isto pode demorar 1 minuto...")
-    
-    # Analisamos apenas as primeiras 100 por questões de velocidade no GitHub Actions
-    # mas o radar agora é dinâmico (pega sempre nas maiores do momento)
+    # Analisamos as top 100 para ser mais rápido
     for t in tickers[:100]: 
         try:
             acao = yf.Ticker(t)
             hist = acao.history(period="5d")
             if len(hist) < 2: continue
             
-            # Cálculo de performance (últimas 24h/48h)
             variacao = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
             
-            # Filtro de Volume: Garante que há dinheiro real a entrar (mínimo 1 milhão de ações)
-            if acao.info.get('regularMarketVolume', 0) > 1000000:
+            # Filtro de Volume > 1M e apenas subidas positivas
+            if acao.info.get('regularMarketVolume', 0) > 1000000 and variacao > 0:
                 performance_lista.append({
+                    'data': datetime.now().strftime("%Y-%m-%d"),
                     'ticker': t,
                     'nome': acao.info.get('longName', t),
-                    'variacao': variacao,
-                    'preco': hist['Close'].iloc[-1],
+                    'variacao': round(variacao, 2),
+                    'preco': round(hist['Close'].iloc[-1], 2),
                     'setor': acao.info.get('sector', 'N/A')
                 })
-        except:
-            continue
+        except: continue
     
-    # Ordena pelas 5 que mais subiram
     top_5 = sorted(performance_lista, key=lambda x: x['variacao'], reverse=True)[:5]
 
     if not top_5:
-        enviar_telegram("⚠️ itisinvest: Radar ativo, mas sem subidas relevantes hoje.")
+        enviar_telegram("⚠️ itisinvest: Sem subidas relevantes hoje.")
         return
+
+    # GUARDAR HISTÓRICO EM CSV
+    df_top = pd.DataFrame(top_5)
+    if not os.path.isfile('historico.csv'):
+        df_top.to_csv('historico.csv', index=False)
+    else:
+        df_top.to_csv('historico.csv', mode='a', header=False, index=False)
 
     relatorio_ia = ""
     for ativo in top_5:
-        ticker = ativo['ticker']
-        nome = ativo['nome']
-        variacao = ativo['variacao']
-        setor = ativo['setor']
-        
+        # Tenta a IA com um prompt mais simples para evitar erros
         try:
-            # IA analisa o motivo da explosão
-            noticias = yf.Ticker(ticker).news[:2]
-            contexto = "\n".join([n.get('title', '') for n in noticias])
-            
-            prompt = (f"A empresa {nome} ({ticker}) do setor {setor} subiu {variacao:.2f}%. "
-                      f"Contexto: {contexto}. Explique brevemente o motivo e dê uma recomendação rápida. "
-                      f"Seja direto e em Português.")
-            
+            noticias = yf.Ticker(ativo['ticker']).news[:2]
+            titulos = " ".join([n.get('title', '') for n in noticias])
+            prompt = f"Empresa: {ativo['nome']}. Subiu {ativo['variacao']}%. Notícias: {titulos}. Porquê? Responde curto em Português."
             res = model.generate_content(prompt)
-            analise = res.text
+            analise = res.text.strip()
         except:
-            analise = "Análise rápida indisponível."
+            analise = "Análise técnica baseada em volume de mercado."
 
-        relatorio_ia += f"🚀 *{nome}* ({ticker})\n📂 {setor}\n📈 Subida: +{variacao:.2f}% | ${ativo['preco']:.2f}\n🧐 {analise}\n\n"
+        relatorio_ia += f"🚀 *{ativo['nome']}* ({ativo['ticker']})\n📈 +{ativo['variacao']}% | ${ativo['preco']}\n🧐 {analise}\n\n"
 
-    enviar_telegram(f"🔥 *RADAR AUTOMÁTICO itisinvest*\n_As 5 maiores subidas do S&P 500_\n\n{relatorio_ia}")
+    enviar_telegram(f"🔥 *RADAR AUTOMÁTICO ITISI Invest*\n\n{relatorio_ia}")
 
 if __name__ == "__main__":
     executar_itisinvest()
