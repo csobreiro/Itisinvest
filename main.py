@@ -10,7 +10,6 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Configurar o Gemini (IA)
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
@@ -19,93 +18,82 @@ def enviar_telegram(mensagem):
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        print(f"Erro ao enviar Telegram: {e}")
+    except:
+        print("Erro ao contactar Telegram")
 
-def obter_tickers_automaticos():
-    """Busca as 500 empresas do S&P 500 dinamicamente"""
+def obter_tickers_sp500():
     try:
         tabela = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        df = tabela[0]
-        # Limpa tickers (Yahoo usa '-' em vez de '.')
-        return [t.replace('.', '-') for t in df['Symbol'].tolist()]
-    except Exception as e:
-        print(f"Erro ao obter lista S&P 500: {e}")
-        return ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN", "AMD", "META"]
+        return [t.replace('.', '-') for t in tabela[0]['Symbol'].tolist()]
+    except:
+        return ["AAPL", "NVDA", "TSLA", "MSFT", "AMZN"]
+
+def perguntar_ia(nome, ticker, variacao, contexto, tipo_alerta):
+    try:
+        prompt = (f"Empresa: {nome} ({ticker}). Situação: {tipo_alerta} com {variacao}% de variação. "
+                  f"Notícias: {contexto}. Explica o que fazer (manter/vender/comprar) em 2 frases em Português.")
+        res = model.generate_content(prompt)
+        return res.text.strip()
+    except:
+        return "Análise técnica recomenda cautela. Verifique o volume de fecho."
 
 def executar_itisinvest():
-    tickers = obter_tickers_automaticos()
+    print("📡 ITISI Invest: A processar radar e carteira...")
+    
+    # 1. CARREGAR A TUA CARTEIRA
+    alertas_venda = ""
+    if os.path.exists('carteira.csv'):
+        try:
+            df_cart = pd.read_csv('carteira.csv')
+            for _, row in df_cart.iterrows():
+                t = row['ticker']
+                p_compra = float(row['preco_compra'])
+                
+                acao = yf.Ticker(t)
+                preco_atual = acao.history(period="1d")['Close'].iloc[-1]
+                performance = ((preco_atual - p_compra) / p_compra) * 100
+                
+                # REGRAS: Lucro > 10% ou Prejuízo < -5%
+                if performance > 10 or performance < -5:
+                    tipo = "💰 LUCRO ATINGIDO" if performance > 0 else "⚠️ STOP LOSS ATIVADO"
+                    news = acao.news[0].get('title', '') if acao.news else "Sem notícias"
+                    analise = perguntar_ia(t, t, round(performance, 2), news, tipo)
+                    
+                    alertas_venda += f"*{tipo}*\nAtivo: {t}\nResultado: {performance:.2f}%\nPreço: ${preco_atual:.2f}\n🧐 {analise}\n\n"
+        except Exception as e:
+            print(f"Erro ao ler carteira: {e}")
+
+    # 2. RADAR DE COMPRAS (MERCADO)
+    tickers_mercado = obter_tickers_sp500()
     performance_lista = []
-    
-    print(f"📡 ITISI Invest: Analisando mercado...")
-    
-    # Analisa o Top 100 do índice para eficiência
-    for t in tickers[:100]: 
+    for t in tickers_mercado[:80]: # Analisa os 80 maiores
         try:
             acao = yf.Ticker(t)
-            hist = acao.history(period="5d")
-            if len(hist) < 2: continue
+            hist = acao.history(period="2d")
+            variacao = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
             
-            # Cálculo de variação diária
-            v_ontem = hist['Close'].iloc[-2]
-            v_hoje = hist['Close'].iloc[-1]
-            variacao = ((v_hoje - v_ontem) / v_ontem) * 100
-            
-            # Filtros de Qualidade: Subida positiva e Volume > 1M
-            info = acao.info
-            volume = info.get('regularMarketVolume', 0)
-            
-            if variacao > 0 and volume > 1000000:
+            if variacao > 3 and acao.info.get('regularMarketVolume', 0) > 1000000:
                 performance_lista.append({
-                    'data': datetime.now().strftime("%Y-%m-%d"),
-                    'ticker': t,
-                    'nome': info.get('longName', t),
-                    'variacao': round(variacao, 2),
-                    'preco': round(v_hoje, 2),
-                    'setor': info.get('sector', 'N/A')
+                    'ticker': t, 'nome': acao.info.get('longName', t),
+                    'variacao': round(variacao, 2), 'preco': round(hist['Close'].iloc[-1], 2),
+                    'setor': acao.info.get('sector', 'N/A')
                 })
-        except:
-            continue
-    
-    # Seleciona as 5 melhores subidas
+        except: continue
+
     top_5 = sorted(performance_lista, key=lambda x: x['variacao'], reverse=True)[:5]
 
-    if not top_5:
-        enviar_telegram("⚠️ ITISI Invest: Nenhuma oportunidade clara detectada.")
-        return
+    # 3. CONSTRUIR MENSAGEM
+    msg = "🚀 *RELATÓRIO ITISI Invest*\n\n"
+    
+    if alertas_venda:
+        msg += "🔔 *ALERTAS DE GESTÃO:*\n" + alertas_venda + "───────────────\n"
+    
+    msg += "📈 *MELHORES DO DIA (RADAR):*\n"
+    for c in top_5:
+        analise = perguntar_ia(c['nome'], c['ticker'], c['variacao'], "Subida forte", "Compra")
+        msg += f"*{c['nome']}*\nVar: +{c['variacao']}% | ${c['preco']}\n🧐 {analise}\n\n"
 
-    # --- MEMÓRIA: GRAVAÇÃO DO HISTÓRICO CSV ---
-    df_top = pd.DataFrame(top_5)
-    csv_file = 'historico.csv'
-    if not os.path.isfile(csv_file):
-        df_top.to_csv(csv_file, index=False)
-    else:
-        df_top.to_csv(csv_file, mode='a', header=False, index=False)
-
-    # --- ANÁLISE IA E FORMATAÇÃO ---
-    relatorio_ia = ""
-    for ativo in top_5:
-        try:
-            # Captura notícias de forma ultra-limpa para a IA
-            t_obj = yf.Ticker(ativo['ticker'])
-            news = t_obj.news
-            contexto = " | ".join([n.get('title', '') for n in news[:3]]) if news else "Sem notícias específicas."
-            
-            prompt = (f"Empresa: {ativo['nome']} ({ativo['ticker']}). "
-                      f"Subiu {ativo['variacao']}% hoje com preço de ${ativo['preco']}. "
-                      f"Notícias: {contexto}. Explique o motivo e dê uma recomendação curta em Português.")
-            
-            res = model.generate_content(prompt)
-            analise = res.text.strip()
-        except:
-            analise = "Forte tendência de alta confirmada por volume comprador. Monitore o suporte."
-
-        relatorio_ia += (f"🚀 *{ativo['nome']}* ({ativo['ticker']})\n"
-                        f"📂 Setor: {ativo['setor']}\n"
-                        f"📈 Var: +{ativo['variacao']}% | Preço: ${ativo['preco']}\n"
-                        f"🧐 {analise}\n\n")
-
-    enviar_telegram(f"🔥 *RADAR AUTOMÁTICO ITISI Invest*\n\n{relatorio_ia}")
+    enviar_telegram(msg)
 
 if __name__ == "__main__":
     executar_itisinvest()
