@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import os
 from groq import Groq
+import time
 
 # --- CONFIGURAÇÕES ---
 GROQ_KEY = os.getenv("GROQ_API_KEY")
@@ -10,58 +11,106 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def enviar_telegram(mensagem):
+    """Envia mensagem para Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
     try:
-        requests.post(url, data=payload, timeout=20)
+        response = requests.post(url, data=payload, timeout=20)
+        return response.status_code == 200
     except Exception as e:
-        print(f"Erro Telegram: {e}")
+        print(f"❌ Erro Telegram: {e}")
+        return False
+
+def obter_info_basica(ticker):
+    """Fallback: info básica do Yahoo Finance"""
+    try:
+        acao = yf.Ticker(ticker)
+        info = acao.info
+        nome = info.get('longName', info.get('shortName', ticker))
+        setor = info.get('sector', '')
+        
+        if len(nome) > 40:
+            nome = nome[:37] + "..."
+        
+        if setor:
+            return f"{nome} ({setor})"
+        return nome
+    except:
+        return "Info indisponível"
 
 def perguntar_ia(ticker, preco):
+    """Consulta Groq com fallback robusto"""
     try:
         if not GROQ_KEY:
-            return "Erro: GROQ_API_KEY não configurada."
-            
-        client = Groq(api_key=GROQ_KEY)
-        prompt = f"Ação {ticker} preço ${preco}. Explique brevemente o que a empresa faz e a tendência em 1 frase em Português."
+            return obter_info_basica(ticker)
         
-        chat_completion = client.chat.completions.create(
+        ticker_limpo = ''.join(c for c in ticker if c.isalnum() or c == '.')
+        client = Groq(api_key=GROQ_KEY)
+        
+        prompt = f"Acao {ticker_limpo} custando ${preco}. Responde em portugues numa frase: o que a empresa faz."
+        
+        completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama3-8b-8192",
-            temperature=0.5
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            max_tokens=100
         )
-        return chat_completion.choices[0].message.content.strip()
+        
+        resposta = completion.choices[0].message.content.strip()
+        return resposta[:200] if len(resposta) > 200 else resposta
+        
     except Exception as e:
-        return f"IA indisponível ({str(e)[:30]})"
+        print(f"⚠️ Groq erro ({ticker}): {str(e)[:80]}")
+        return obter_info_basica(ticker)
 
 def executar_itisinvest():
     print("📡 Iniciando Scan...")
     
     info_carteira = ""
-    if os.path.exists('carteira.csv'):
-        df = pd.read_csv('carteira.csv')
-        df.columns = df.columns.str.strip().str.lower()
-        
-        for _, row in df.iterrows():
-            try:
-                t = str(row['ticker']).strip().upper()
-                p_compra = float(row['preco_compra'])
+    
+    if not os.path.exists('carteira.csv'):
+        enviar_telegram("⚠️ *ITISI Invest*\n\nCarteira.csv não encontrado!")
+        return
+    
+    df = pd.read_csv('carteira.csv')
+    df.columns = df.columns.str.strip().str.lower()
+    
+    for _, row in df.iterrows():
+        try:
+            ticker = str(row['ticker']).strip().upper()
+            preco_compra = float(row['preco_compra'])
+            
+            print(f"🔍 {ticker}...", end=" ")
+            
+            acao = yf.Ticker(ticker)
+            hist = acao.history(period="1d")
+            
+            if hist.empty:
+                print("❌")
+                continue
                 
-                # Dados do Yahoo Finance
-                acao = yf.Ticker(t)
-                p_atual = acao.history(period="1d")['Close'].iloc[-1]
-                perf = ((p_atual - p_compra) / p_compra) * 100
-                
-                # Análise da Groq
-                analise = perguntar_ia(t, round(p_atual, 2))
-                
-                emoji = "🟢" if perf >= 0 else "🔴"
-                info_carteira += f"{emoji} *{t}* | {perf:.2f}%\n   👉 {analise}\n\n"
-            except: continue
-    else:
-        info_carteira = "⚠️ Carteira.csv não encontrado."
-
-    msg = f"📦 *ITISI Invest - RELATÓRIO (GROQ)*\n───────────────────\n{info_carteira}"
+            preco_atual = hist['Close'].iloc[-1]
+            perf = ((preco_atual - preco_compra) / preco_compra) * 100
+            
+            analise = perguntar_ia(ticker, round(preco_atual, 2))
+            
+            emoji = "🟢" if perf >= 0 else "🔴"
+            info_carteira += (
+                f"{emoji} *{ticker}* | {preco_atual:.2f} | {perf:+.1f}%\n"
+                f"   💬 _{analise}_\n\n"
+            )
+            
+            print(f"✅ {perf:+.1f}%")
+            time.sleep(0.3)
+            
+        except Exception as e:
+            print(f"❌ Erro: {e}")
+            continue
+    
+    if not info_carteira:
+        info_carteira = "Nenhuma ação processada com sucesso."
+    
+    msg = f"📦 *ITISI INVEST*\n🤖 _Powered by Groq_\n{'─'*25}\n\n{info_carteira}"
     enviar_telegram(msg)
     print("✅ Concluído!")
 
