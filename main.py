@@ -9,7 +9,6 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Configurar Gemini
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
@@ -18,43 +17,57 @@ def enviar_telegram(mensagem):
     payload = {"chat_id": CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
     requests.post(url, data=payload)
 
-def analisar_itisinvest(ticker):
-    print(f"A analisar {ticker}...")
-    try:
-        acao = yf.Ticker(ticker)
-        hist = acao.history(period="60d")
-        if hist.empty: return
-
-        preco_atual = hist['Close'].iloc[-1]
-        ma20 = hist['Close'].rolling(window=20).mean().iloc[-1]
-
-        # Só avança se o preço estiver acima da média (Sinal de força)
-        if preco_atual > ma20:
-            # MÉTODO CORRIGIDO PARA NOTÍCIAS:
-            news_list = acao.news
-            # Tenta pegar os títulos de forma segura
-            titulos = ""
-            if news_list:
-                for n in news_list[:3]:
-                    titulos += f"- {n.get('title', n.get('content', {}).get('title', 'Sem título'))}\n"
-
-            prompt = (f"Analisa a ação {ticker}. Preço: ${preco_atual:.2f}. "
-                      f"Notícias recentes:\n{titulos}\n"
-                      f"Diz em 3 tópicos: Vale o risco comprar hoje? Responde em Português.")
-
-            response = model.generate_content(prompt)
+def obter_melhores_performances():
+    # Lista expandida: Principais tecnológicas e setores fortes
+    tickers = ["AAPL", "NVDA", "TSLA", "MSFT", "GOOGL", "AMZN", "META", "NFLX", "AMD", "AVGO", "SMCI", "COIN", "PLTR", "LLY"]
+    
+    performance_lista = []
+    
+    print(f"Varrendo {len(tickers)} ativos em busca de performance...")
+    
+    for t in tickers:
+        try:
+            acao = yf.Ticker(t)
+            hist = acao.history(period="10d") # Analisa os últimos 10 dias
+            if len(hist) < 10: continue
             
-            msg = (f"🤖 *itisinvest ALERT*\n\n"
-                   f"📈 *Ativo:* {ticker}\n"
-                   f"💰 *Preço:* ${preco_atual:.2f}\n\n"
-                   f"🧠 *Análise da IA:*\n{response.text}")
-            
-            enviar_telegram(msg)
-    except Exception as e:
-        print(f"Erro ao analisar {ticker}: {e}")
+            # Calcula a variação percentual nos últimos 5 dias
+            variacao = ((hist['Close'].iloc[-1] - hist['Close'].iloc[-5]) / hist['Close'].iloc[-5]) * 100
+            performance_lista.append({'ticker': t, 'variacao': variacao, 'preco': hist['Close'].iloc[-1]})
+        except:
+            continue
+    
+    # Ordena pelas 5 melhores subidas
+    top_5 = sorted(performance_lista, key=lambda x: x['variacao'], reverse=True)[:5]
+    return top_5
 
-watchlist = ["AAPL", "NVDA", "TSLA", "MSFT", "GOOGL", "AMZN"]
+def executar_itisinvest():
+    top_ativos = obter_melhores_performances()
+    
+    if not top_ativos:
+        enviar_telegram("⚠️ itisinvest: Não foram encontrados dados de mercado hoje.")
+        return
+
+    relatorio_ia = ""
+    for ativo in top_ativos:
+        ticker = ativo['ticker']
+        variacao = ativo['variacao']
+        
+        # IA analisa o contexto da subida
+        try:
+            noticias = yf.Ticker(ticker).news[:2]
+            titulos = "\n".join([n.get('title', '') for n in noticias])
+            
+            prompt = f"A ação {ticker} subiu {variacao:.2f}% nos últimos dias. Notícias: {titulos}. Justifica esta subida em uma frase e diz se ainda há espaço para subir. Responde em Português."
+            res = model.generate_content(prompt)
+            analise = res.text
+        except:
+            analise = "Análise indisponível."
+
+        relatorio_ia += f"📈 *{ticker}*: +{variacao:.2f}% | Preço: ${ativo['preco']:.2f}\n🧐 {analise}\n\n"
+
+    mensagem_final = f"🚀 *TOP 5 PERFORMANCES - itisinvest*\n\n{relatorio_ia}"
+    enviar_telegram(mensagem_final)
 
 if __name__ == "__main__":
-    for papel in watchlist:
-        analisar_itisinvest(papel)
+    executar_itisinvest()
