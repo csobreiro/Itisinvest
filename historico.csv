@@ -3,3 +3,8 @@ data,ticker,nome,variacao,preco,setor
 2026-02-07,TSLA,"Tesla, Inc.",3.5,411.11,Consumer Cyclical
 2026-02-07,MSFT,Microsoft Corporation,1.9,401.14,Technology
 2026-02-07,AAPL,Apple Inc.,0.8,278.12,Technology
+2026-02-07,AMD,"Advanced Micro Devices, Inc.",8.28,208.44,Technology
+2026-02-07,NVDA,NVIDIA Corporation,7.87,185.41,Technology
+2026-02-07,TSLA,"Tesla, Inc.",3.5,411.11,Consumer Cyclical
+2026-02-07,MSFT,Microsoft Corporation,1.9,401.14,Technology
+2026-02-07,AAPL,Apple Inc.,0.8,278.12,Technology
