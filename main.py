@@ -18,19 +18,25 @@ def enviar_telegram(mensagem):
 def perguntar_ia(ticker, variacao, preco):
     try:
         genai.configure(api_key=GEMINI_KEY)
-        # Usamos o modelo mais estável
+        # Forma mais compatível de chamar o modelo
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        time.sleep(4) # Intervalo para evitar bloqueio por velocidade
+        time.sleep(5) # Pausa estratégica
         
-        prompt = f"Ação {ticker} ({variacao}%). Preço ${preco}. Resuma o motivo e tendência em 15 palavras em Português."
+        prompt = f"Ação {ticker} {variacao}% preço ${preco}. Motivo e tendência em 1 frase curta em Português."
+        
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"Aguardando ativação da API... ({str(e)[:15]})"
+        # Se falhar o 1.5, tenta o Pro que é o mais antigo e estável
+        try:
+            model_alt = genai.GenerativeModel('gemini-pro')
+            return model_alt.generate_content(prompt).text.strip()
+        except:
+            return f"Erro técnico: {str(e)[:20]}"
 
 def executar_itisinvest():
-    print("📡 ITISI Invest: Testando nova chave API...")
+    print("📡 ITISI Invest: Forçando atualização de bibliotecas...")
     
     info_carteira = ""
     if os.path.exists('carteira.csv'):
@@ -39,11 +45,9 @@ def executar_itisinvest():
             try:
                 t = str(row['ticker']).strip().upper()
                 p_compra = float(row['preco_compra'])
-                
                 acao = yf.Ticker(t)
                 p_atual = acao.history(period="1d")['Close'].iloc[-1]
                 perf = ((p_atual - p_compra) / p_compra) * 100
-                
                 analise = perguntar_ia(t, round(perf, 2), round(p_atual, 2))
                 
                 emoji = "🟢" if perf >= 0 else "🔴"
@@ -54,8 +58,9 @@ def executar_itisinvest():
     for t in ["NVDA", "TSLA"]:
         try:
             acao = yf.Ticker(t)
-            v = ((acao.history(period="2d")['Close'].iloc[-1] / acao.history(period="2d")['Close'].iloc[-2]) - 1) * 100
-            analise_r = perguntar_ia(t, round(v, 2), round(acao.history(period="1d")['Close'].iloc[-1], 2))
+            h = acao.history(period="2d")
+            v = ((h['Close'].iloc[-1] / h['Close'].iloc[-2]) - 1) * 100
+            analise_r = perguntar_ia(t, round(v, 2), round(h['Close'].iloc[-1]:.2f))
             radar_investimentos += f"🚀 *{t}* (+{v:.2f}%)\n   👉 {analise_r}\n\n"
         except: continue
 
