@@ -17,29 +17,25 @@ def enviar_telegram(mensagem):
 
 def perguntar_ia(ticker, variacao, preco):
     try:
-        # Configuração simplificada e direta
         genai.configure(api_key=GEMINI_KEY)
         
-        # Tentamos o modelo 1.5-flash com o nome completo
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        # Tentamos os nomes de modelos mais comuns um por um
+        for nome_modelo in ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']:
+            try:
+                model = genai.GenerativeModel(nome_modelo)
+                time.sleep(2) # Pausa curta
+                prompt = f"Ação {ticker} {variacao}% preço ${preco}. Resumo curto em Português."
+                response = model.generate_content(prompt)
+                return response.text.strip()
+            except:
+                continue # Se falhar este, tenta o próximo
         
-        time.sleep(5) # Pausa maior para evitar o erro de quota
-        
-        prompt = f"Ação {ticker} variou {variacao}% e custa ${preco}. Resuma o motivo e tendência em 15 palavras em Português."
-        
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return "IA: Modelo não encontrado na sua conta."
     except Exception as e:
-        # Se o 1.5-flash falhar, tentamos o 1.0-pro como backup automático
-        try:
-            model_backup = genai.GenerativeModel('models/gemini-1.0-pro')
-            response = model_backup.generate_content(prompt)
-            return response.text.strip()
-        except:
-            return f"Erro persistente: {str(e)[:30]}"
+        return f"Erro: {str(e)[:20]}"
 
 def executar_itisinvest():
-    print("📡 ITISI Invest: Corrigindo rota da API...")
+    print("📡 ITISI Invest: Testando compatibilidade de modelos...")
     
     info_carteira = ""
     if os.path.exists('carteira.csv'):
@@ -61,7 +57,7 @@ def executar_itisinvest():
             except: continue
 
     radar_investimentos = ""
-    for t in ["NVDA", "TSLA", "MSTR"]:
+    for t in ["NVDA", "TSLA"]:
         try:
             acao = yf.Ticker(t)
             h = acao.history(period="2d")
@@ -70,8 +66,7 @@ def executar_itisinvest():
             radar_investimentos += f"🚀 *{t}* (+{v:.2f}%)\n   👉 {analise_r}\n\n"
         except: continue
 
-    msg = f"📦 *ITISI Invest - RELATÓRIO CORRIGIDO*\n───────────────────\n{info_carteira}"
-    msg += f"🔍 *POTENCIAIS INVESTIMENTOS*\n───────────────────\n{radar_investimentos}"
+    msg = f"📦 *ITISI Invest - RELATÓRIO*\n───────────────────\n{info_carteira}{radar_investimentos}"
     enviar_telegram(msg)
 
 if __name__ == "__main__":
