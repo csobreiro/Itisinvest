@@ -2,7 +2,7 @@ name: ITISI Invest Scan
 
 on:
   schedule:
-    - cron: '12 13 * * 1-5' # Corre às 13h nos dias úteis
+    - cron: '12 12 * * 1-5' # Corre às 13h nos dias úteis
   workflow_dispatch:      # Permite correr manualmente quando quiseres
 
 jobs:
