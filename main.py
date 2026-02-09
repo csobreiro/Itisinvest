@@ -19,6 +19,15 @@ def enviar_telegram(mensagem):
     except Exception as e:
         print(f"❌ Erro Telegram: {e}")
 
+def gravar_historico(data, patrimonio):
+    """Grava o património diário num ficheiro CSV"""
+    novo_dado = pd.DataFrame([[data, round(patrimonio, 2)]], columns=['data', 'patrimonio'])
+    if not os.path.isfile('historico.csv'):
+        novo_dado.to_csv('historico.csv', index=False)
+    else:
+        novo_dado.to_csv('historico.csv', mode='a', header=False, index=False)
+    print(f"💾 Património de ${patrimonio:.2f} gravado no histórico.")
+
 def perguntar_ia(ticker, variacao, preco):
     try:
         if not GROQ_KEY: return "Análise técnica indisponível."
@@ -35,14 +44,12 @@ def perguntar_ia(ticker, variacao, preco):
         return "Ação com forte volume e tendência de mercado positiva."
 
 def executar_itisinvest():
-    # Captura a data atual
     data_atual = datetime.now().strftime("%d/%m/%Y")
     print(f"📡 Iniciando Scan para o dia {data_atual}...")
     
     info_carteira = ""
     patrimonio_total = 0
     
-    # --- PARTE 1: CARTEIRA ---
     if os.path.exists('carteira.csv'):
         df = pd.read_csv('carteira.csv')
         df.columns = df.columns.str.strip().str.lower()
@@ -67,16 +74,19 @@ def executar_itisinvest():
                 emoji = "🟢" if perf >= 0 else "🔴"
                 info_carteira += (
                     f"{emoji} *{t}* | {perf:+.1f}%\n"
-                    f"   • Património: ${valor_posicao:.2f}\n"
-                    f"   💬 _{analise}_\n\n"
+                    f"    • Património: ${valor_posicao:.2f}\n"
+                    f"    💬 _{analise}_\n\n"
                 )
                 time.sleep(0.4)
             except: continue
     
-    # --- PARTE 2: RADAR TOP 5 ---
+    # --- GRAVAÇÃO DO HISTÓRICO ---
+    if patrimonio_total > 0:
+        gravar_historico(data_atual, patrimonio_total)
+
+    # --- RADAR TOP 5 ---
     radar_tickers = ["NVDA", "TSLA", "MSTR", "AMD", "PLTR", "AAPL", "MSFT", "AMZN", "META", "GOOGL"]
     lista_performance = []
-
     for t in radar_tickers:
         try:
             acao = yf.Ticker(t)
@@ -91,10 +101,9 @@ def executar_itisinvest():
     radar_texto = ""
     for item in top_5:
         analise_r = perguntar_ia(item['ticker'], round(item['var'], 2), round(item['preco'], 2))
-        radar_texto += f"🚀 *{item['ticker']}* (+{item['var']:.2f}%)\n   👉 _{analise_r}_\n\n"
+        radar_texto += f"🚀 *{item['ticker']}* (+{item['var']:.2f}%)\n    👉 _{analise_r}_\n\n"
         time.sleep(0.4)
 
-    # --- MENSAGEM FINAL ---
     msg = (
         f"📦 *RELATÓRIO DIÁRIO - {data_atual}*\n"
         f"💰 Património Total: ${patrimonio_total:.2f}\n"
