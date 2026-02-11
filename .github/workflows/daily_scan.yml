@@ -2,7 +2,7 @@ name: ITISI Invest Scan
 
 on:
   schedule:
-   - cron: '*/30 * * * *'  # A cada 30 minutos (APENAS PARA TESTE)
+   - cron: '05 12 * * 1-5' # Corre às 13:12 UTC (Hora de Portugal) de Seg a Sex
     
   workflow_dispatch:      # Permite correr manualmente pelo botão "Run workflow"
 
